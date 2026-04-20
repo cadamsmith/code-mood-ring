@@ -1,0 +1,16 @@
+name: Code Mood Ring
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  mood-ring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cadamsmith/code-mood-ring@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}

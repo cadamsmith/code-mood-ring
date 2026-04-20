@@ -1,0 +1,17 @@
+name: "Code Mood Ring"
+description: "Analyzes commit messages and code comments in a PR and posts the developer's emotional state as a PR comment. Completely useless. Highly accurate."
+author: "cadamsmith"
+
+branding:
+  icon: "activity"
+  color: "purple"
+
+inputs:
+  github-token:
+    description: "GitHub token for posting PR comments"
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: "node20"
+  main: "dist/index.js"
