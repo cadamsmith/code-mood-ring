@@ -30225,16 +30225,125 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const core = __importStar(__nccwpck_require__(7484));
+const github = __importStar(__nccwpck_require__(3228));
+const mood_1 = __nccwpck_require__(6740);
+const MOOD_RING_MARKER = "<!-- code-mood-ring -->";
+function buildComment(mood, commitHighlight, commentHighlight, commitCount, codeCommentCount, commitScore, commentScore) {
+    const filled = "█".repeat(mood.stability);
+    const empty = "░".repeat(10 - mood.stability);
+    const sources = [
+        `**Commits:** \`${commitScore.toFixed(1)}\` sentiment avg across ${commitCount} message${commitCount === 1 ? "" : "s"}`,
+        commentScore !== null
+            ? `**Code comments:** \`${commentScore.toFixed(1)}\` sentiment avg across ${codeCommentCount} comment${codeCommentCount === 1 ? "" : "s"}`
+            : `**Code comments:** none found in diff`,
+    ].join("\n");
+    const highlights = [
+        `> 💬 Most telling commit: *"${commitHighlight}"*`,
+        commentHighlight
+            ? `> 🔍 Most telling comment: *"${commentHighlight}"*`
+            : null,
+    ]
+        .filter(Boolean)
+        .join("\n");
+    return `${MOOD_RING_MARKER}
+## 🌡️ Code Mood Ring
+
+**Mood:** ${mood.emoji} ${mood.label}
+
+${mood.summary}
+
+**Stability Score:** \`${filled}${empty}\` ${mood.stability}/10
+
+${sources}
+
+${highlights}
+
+---
+*[code-mood-ring](https://github.com/cadamsmith/code-mood-ring) · completely useless · highly accurate*`;
+}
+async function run() {
+    const githubToken = core.getInput("github-token", { required: true });
+    const octokit = github.getOctokit(githubToken);
+    const context = github.context;
+    if (!context.payload.pull_request) {
+        core.info("Not a pull request event, skipping.");
+        return;
+    }
+    const pr = context.payload.pull_request;
+    const { owner, repo } = context.repo;
+    const { data: commits } = await octokit.rest.pulls.listCommits({
+        owner,
+        repo,
+        pull_number: pr.number,
+        per_page: 100,
+    });
+    const commitMessages = commits.map((c) => c.commit.message.split("\n")[0].trim());
+    const { data: diffData } = await octokit.rest.pulls.get({
+        owner,
+        repo,
+        pull_number: pr.number,
+        mediaType: { format: "diff" },
+    });
+    const diff = diffData;
+    const codeComments = (0, mood_1.parseCommentsFromDiff)(diff);
+    core.info(`Found ${commitMessages.length} commits and ${codeComments.length} code comment(s) in diff`);
+    const commitScore = (0, mood_1.avgSentiment)(commitMessages) ?? 0;
+    const commentScore = (0, mood_1.avgSentiment)(codeComments);
+    const blendedScore = commentScore !== null
+        ? commitScore * 0.6 + commentScore * 0.4
+        : commitScore;
+    const mood = (0, mood_1.getMood)(blendedScore);
+    const commitHighlight = (0, mood_1.getMostTelling)(commitMessages);
+    const commentHighlight = codeComments.length > 0 ? (0, mood_1.getMostTelling)(codeComments) : null;
+    core.info(`Blended score: ${blendedScore.toFixed(2)} → ${mood.emoji} ${mood.label}`);
+    const commentBody = buildComment(mood, commitHighlight, commentHighlight, commitMessages.length, codeComments.length, commitScore, commentScore);
+    const { data: prComments } = await octokit.rest.issues.listComments({
+        owner,
+        repo,
+        issue_number: pr.number,
+    });
+    const existing = prComments.find((c) => c.body?.includes(MOOD_RING_MARKER));
+    if (existing) {
+        await octokit.rest.issues.updateComment({
+            owner,
+            repo,
+            comment_id: existing.id,
+            body: commentBody,
+        });
+    }
+    else {
+        await octokit.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: pr.number,
+            body: commentBody,
+        });
+    }
+}
+run().catch(core.setFailed);
+
+
+/***/ }),
+
+/***/ 6740:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-const core = __importStar(__nccwpck_require__(7484));
-const github = __importStar(__nccwpck_require__(3228));
+exports.MOOD_TIERS = exports.COMMIT_EXTRAS = void 0;
+exports.parseCommentsFromDiff = parseCommentsFromDiff;
+exports.avgSentiment = avgSentiment;
+exports.getMostTelling = getMostTelling;
+exports.getMood = getMood;
 const sentiment_1 = __importDefault(__nccwpck_require__(2593));
-const MOOD_RING_MARKER = "<!-- code-mood-ring -->";
 const sentiment = new sentiment_1.default();
-const COMMIT_EXTRAS = {
+exports.COMMIT_EXTRAS = {
     extras: {
         fix: -1,
         fixes: -1,
@@ -30265,7 +30374,6 @@ const COMMIT_EXTRAS = {
         tests: 1,
     },
 };
-// Comment prefixes to strip before analysis
 const COMMENT_PATTERNS = [
     /^\s*\/\/+\s*/, // // or ///
     /^\s*#+\s*/, // # or ##
@@ -30285,7 +30393,6 @@ function extractCommentText(line) {
     for (const pattern of COMMENT_PATTERNS) {
         text = text.replace(pattern, "");
     }
-    // Strip trailing */ or -->
     text = text
         .replace(/\*\/\s*$/, "")
         .replace(/-->\s*$/, "")
@@ -30295,13 +30402,12 @@ function extractCommentText(line) {
 function parseCommentsFromDiff(diff) {
     const comments = [];
     for (const line of diff.split("\n")) {
-        // Only look at added lines, skip diff metadata
         if (!line.startsWith("+") || line.startsWith("+++"))
             continue;
         if (isCommentLine(line)) {
             const text = extractCommentText(line);
             if (text.length > 2)
-                comments.push(text); // skip empty/trivial comments
+                comments.push(text);
         }
     }
     return comments;
@@ -30309,17 +30415,17 @@ function parseCommentsFromDiff(diff) {
 function avgSentiment(texts) {
     if (texts.length === 0)
         return null;
-    const total = texts.reduce((sum, t) => sum + sentiment.analyze(t, COMMIT_EXTRAS).score, 0);
+    const total = texts.reduce((sum, t) => sum + sentiment.analyze(t, exports.COMMIT_EXTRAS).score, 0);
     return total / texts.length;
 }
 function getMostTelling(texts) {
     return texts.reduce((prev, msg) => {
-        const a = Math.abs(sentiment.analyze(msg, COMMIT_EXTRAS).score);
-        const b = Math.abs(sentiment.analyze(prev, COMMIT_EXTRAS).score);
+        const a = Math.abs(sentiment.analyze(msg, exports.COMMIT_EXTRAS).score);
+        const b = Math.abs(sentiment.analyze(prev, exports.COMMIT_EXTRAS).score);
         return a > b ? msg : prev;
     });
 }
-const MOOD_TIERS = [
+exports.MOOD_TIERS = [
     {
         minScore: -Infinity,
         label: "Fine. Everything Is Fine.",
@@ -30378,105 +30484,8 @@ const MOOD_TIERS = [
     },
 ];
 function getMood(score) {
-    return ([...MOOD_TIERS].reverse().find((t) => score >= t.minScore) ?? MOOD_TIERS[0]);
+    return ([...exports.MOOD_TIERS].reverse().find((t) => score >= t.minScore) ?? exports.MOOD_TIERS[0]);
 }
-function buildComment(mood, commitHighlight, commentHighlight, commitCount, codeCommentCount, commitScore, commentScore) {
-    const filled = "█".repeat(mood.stability);
-    const empty = "░".repeat(10 - mood.stability);
-    const sources = [
-        `**Commits:** \`${commitScore.toFixed(1)}\` sentiment avg across ${commitCount} message${commitCount === 1 ? "" : "s"}`,
-        commentScore !== null
-            ? `**Code comments:** \`${commentScore.toFixed(1)}\` sentiment avg across ${codeCommentCount} comment${codeCommentCount === 1 ? "" : "s"}`
-            : `**Code comments:** none found in diff`,
-    ].join("\n");
-    const highlights = [
-        `> 💬 Most telling commit: *"${commitHighlight}"*`,
-        commentHighlight
-            ? `> 🔍 Most telling comment: *"${commentHighlight}"*`
-            : null,
-    ]
-        .filter(Boolean)
-        .join("\n");
-    return `${MOOD_RING_MARKER}
-## 🌡️ Code Mood Ring
-
-**Mood:** ${mood.emoji} ${mood.label}
-
-${mood.summary}
-
-**Stability Score:** \`${filled}${empty}\` ${mood.stability}/10
-
-${sources}
-
-${highlights}
-
----
-*[code-mood-ring](https://github.com/cadamsmith/code-mood-ring) · completely useless · highly accurate*`;
-}
-async function run() {
-    const githubToken = core.getInput("github-token", { required: true });
-    const octokit = github.getOctokit(githubToken);
-    const context = github.context;
-    if (!context.payload.pull_request) {
-        core.info("Not a pull request event, skipping.");
-        return;
-    }
-    const pr = context.payload.pull_request;
-    const { owner, repo } = context.repo;
-    // Fetch commits
-    const { data: commits } = await octokit.rest.pulls.listCommits({
-        owner,
-        repo,
-        pull_number: pr.number,
-        per_page: 100,
-    });
-    const commitMessages = commits.map((c) => c.commit.message.split("\n")[0].trim());
-    // Fetch diff and extract code comments
-    const { data: diffData } = await octokit.rest.pulls.get({
-        owner,
-        repo,
-        pull_number: pr.number,
-        mediaType: { format: "diff" },
-    });
-    const diff = diffData;
-    const codeComments = parseCommentsFromDiff(diff);
-    core.info(`Found ${commitMessages.length} commits and ${codeComments.length} code comment(s) in diff`);
-    // Score each source
-    const commitScore = avgSentiment(commitMessages) ?? 0;
-    const commentScore = avgSentiment(codeComments);
-    // Blend: commits weighted 60%, code comments 40% (if present)
-    const blendedScore = commentScore !== null
-        ? commitScore * 0.6 + commentScore * 0.4
-        : commitScore;
-    const mood = getMood(blendedScore);
-    const commitHighlight = getMostTelling(commitMessages);
-    const commentHighlight = codeComments.length > 0 ? getMostTelling(codeComments) : null;
-    core.info(`Blended score: ${blendedScore.toFixed(2)} → ${mood.emoji} ${mood.label}`);
-    const commentBody = buildComment(mood, commitHighlight, commentHighlight, commitMessages.length, codeComments.length, commitScore, commentScore);
-    const { data: prComments } = await octokit.rest.issues.listComments({
-        owner,
-        repo,
-        issue_number: pr.number,
-    });
-    const existing = prComments.find((c) => c.body?.includes(MOOD_RING_MARKER));
-    if (existing) {
-        await octokit.rest.issues.updateComment({
-            owner,
-            repo,
-            comment_id: existing.id,
-            body: commentBody,
-        });
-    }
-    else {
-        await octokit.rest.issues.createComment({
-            owner,
-            repo,
-            issue_number: pr.number,
-            body: commentBody,
-        });
-    }
-}
-run().catch(core.setFailed);
 
 
 /***/ }),

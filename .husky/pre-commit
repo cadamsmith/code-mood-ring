@@ -1,0 +1,6 @@
+if git diff --cached --name-only | grep -qE '^src/|^package(-lock)?\.json$|^tsconfig\.json$'; then
+  npm run build
+  git add dist
+fi
+
+npm test

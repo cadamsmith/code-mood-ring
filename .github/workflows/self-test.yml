@@ -1,4 +1,4 @@
-name: Code Mood Ring
+name: Self-test
 
 on:
   pull_request:
@@ -11,6 +11,13 @@ jobs:
   mood-ring:
     runs-on: ubuntu-latest
     steps:
-      - uses: cadamsmith/code-mood-ring@v1
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: ./
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
