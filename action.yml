@@ -1,5 +1,5 @@
 name: "Code Mood Ring"
-description: "Analyzes commit messages and code comments in a PR and posts the developer's emotional state as a PR comment. Completely useless. Highly accurate."
+description: "Analyzes PR commits and code comments and posts the developer's emotional state. Completely useless. Highly accurate."
 author: "cadamsmith"
 
 branding:
