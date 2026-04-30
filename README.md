@@ -83,6 +83,17 @@ Code comments are extracted from added lines (`+`) in the diff across languages:
 
 No external API calls are made. Everything runs in the GitHub Actions runner.
 
+## development
+
+```bash
+npm install          # installs deps + the husky pre-commit hook
+npm test             # vitest — covers src/mood.ts
+npm run typecheck    # tsc --noEmit
+npm run build        # bundles src/index.ts → dist/index.js via ncc
+```
+
+The pre-commit hook rebuilds `dist/` whenever `src/` changes and runs the test suite. CI runs typecheck, tests, build, and verifies the committed `dist/` matches what `npm run build` produces.
+
 ## license
 
 MIT

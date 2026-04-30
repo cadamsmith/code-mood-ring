@@ -17,35 +17,51 @@ No external API calls. No secrets needed beyond the standard `GITHUB_TOKEN`.
 ## project structure
 
 ```
-.github/workflows/example.yml   # example workflow for consumers of this action
-src/index.ts                    # all action logic — edit this
+.github/workflows/ci.yml        # typecheck + test + build + dist freshness check
+.github/workflows/self-test.yml # runs the action on its own PRs against the local checkout
+src/mood.ts                     # pure scoring logic (sentiment, comment parsing, mood tiers)
+src/index.ts                    # action entrypoint — Octokit calls, comment rendering, posting
+tests/mood.test.ts              # vitest suite covering src/mood.ts
 dist/index.js                   # compiled bundle — must be committed, GitHub runs this directly
 action.yml                      # action metadata and input definitions
-package.json                    # deps: sentiment, @actions/core, @actions/github
+.husky/pre-commit                # rebuilds dist when src/ changes, runs `npm test`
+package.json                    # deps: sentiment, @actions/core, @actions/github; dev: vitest, husky, ncc
 ```
 
 ## dev workflow
 
 ```bash
-npm install
-# make changes to src/index.ts
-npm run build        # compiles + bundles into dist/index.js via ncc
-# commit both src/ and dist/
+npm install          # also installs husky pre-commit hook via `prepare`
+# edit src/mood.ts or src/index.ts
+npm test             # runs vitest once
+npm run typecheck    # tsc --noEmit
+npm run build        # bundles src/index.ts → dist/index.js via ncc
 ```
 
-Always run `npm run build` before committing. The action runs `dist/index.js` directly — if you forget to rebuild, your changes won't take effect.
+The husky `pre-commit` hook auto-rebuilds `dist/` and re-stages it whenever `src/`, `package.json`, `package-lock.json`, or `tsconfig.json` is staged, then runs `npm test`. CI also enforces this — `.github/workflows/ci.yml` fails the build if the committed `dist/` is stale.
 
 ## key files
 
-### src/index.ts
+### src/mood.ts
 
-All logic lives here. Key sections:
+Pure functions, no I/O — this is what the test suite covers. Key exports:
 
-- `COMMIT_EXTRAS` — custom sentiment overrides tuned for commit message language (`wtf: -4`, `release: 3`, etc.). add more here freely.
+- `COMMIT_EXTRAS` — custom sentiment overrides tuned for commit/code language (`wtf: -4`, `release: 3`, etc.). add more here freely.
 - `MOOD_TIERS` — array of mood buckets ordered by `minScore`. each has a label, emoji, summary line, and stability score (1–10). add new tiers or tweak thresholds here.
 - `parseCommentsFromDiff(diff)` — extracts added comment lines from a raw git diff. supports `//`, `#`, `/*`, `*`, `<!--`, `--`, `%%`, `;`. extend `COMMENT_PATTERNS` for new languages.
-- `getMostTelling(messages)` — picks the single message with the highest absolute sentiment score to quote in the comment.
-- Scoring blend: commits weighted 60%, code comments 40%. if no code comments are found, falls back to commits only. tweak the weights in `run()`.
+- `avgSentiment(texts)` — average AFINN+extras score, or `null` for an empty array.
+- `getMostTelling(texts)` — picks the single message with the highest absolute sentiment score to quote in the comment.
+- `getMood(score)` — maps a blended score to a `MoodTier`.
+
+### src/index.ts
+
+Action entrypoint. Wires Octokit calls (`pulls.listCommits`, `pulls.get` with diff media type, `issues.{list,create,update}Comment`) to the pure helpers in `mood.ts`, renders the markdown comment, and posts or updates it (deduped via the `<!-- code-mood-ring -->` HTML marker).
+
+Scoring blend: commits weighted 60%, code comments 40%. if no code comments are found, falls back to commits only. tweak the weights in `run()`.
+
+### tests/mood.test.ts
+
+Vitest covers the pure logic in `src/mood.ts`: diff parsing across comment syntaxes, `COMMIT_EXTRAS` overrides, `getMostTelling` selection, and `getMood` tier boundaries. When adding new mood tiers or comment patterns, add a test here too.
 
 ### action.yml
 
