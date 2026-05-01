@@ -15,7 +15,7 @@
     "sentiment": "^5.0.2"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^25.6.0",
     "@types/sentiment": "^5.0.4",
     "@vercel/ncc": "^0.38.1",
     "husky": "^9.1.7",
